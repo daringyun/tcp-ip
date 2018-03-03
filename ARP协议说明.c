@@ -1,0 +1,48 @@
+//********************************************************************************
+//* Resolve an IP address to a hardware address; if not found,initiate query
+//* and return NULL.  If an address is returned, the interface driver may  
+//* send the packet; if NULL is returned,res_arp() will have saved the packet 
+//* on its pending queue,so no further action (like freeing the packet) is 
+//* necessary.
+
+uint8 * res_arp(
+     struct iface *iface,		//* Pointer to interface block */
+     enum   arp_hwtype hardware,	//* Hardware type */
+     int32  target,			//* Target IP address */
+     struct mbuf **bpp)	    //* IP datagram to be queued if unresolved */                
+{
+    register struct arp_tab *arp;
+    struct ip ip;
+    
+    if((arp = arp_lookup(hardware,target)) != NULL && arp->state == ARP_VALID)
+    	return arp->hw_addr;
+    if(arp != NULL){
+    	/* Earlier packets are already pending, kick this one back
+    	 * as a source quench
+    	 */
+    	ntohip(&ip,bpp);
+    	icmp_output(&ip,*bpp,ICMP_QUENCH,0,NULL);
+    	free_p(bpp);
+    } else {
+    	/* Create an entry and put the datagram on the
+    	 * queue pending an answer
+    	 */
+    	arp = arp_add(target,hardware,NULL,0);
+    	enqueue(&arp->pending,bpp);
+    	arp_output(iface,hardware,target);
+    }
+    return NULL;
+}
+/* Look up the given IP address in the ARP table */
+struct arp_tab *arp_lookup(hardware,ipaddr)
+enum   arp_hwtype hardware;
+int32  ipaddr;
+{
+	register struct arp_tab *ap;
+
+	for(ap = Arp_tab[hash_ip(ipaddr)]; ap != NULL; ap = ap->next){
+		if(ap->ip_addr == ipaddr && ap->hardware == hardware)
+			break;
+	}
+	return ap;
+}
